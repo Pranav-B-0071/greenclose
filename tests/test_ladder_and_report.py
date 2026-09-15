@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import json
 import math
+import warnings
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -20,6 +22,8 @@ from greenclose.evaluation.report import Criterion, ReportInputs, overall_verdic
 from greenclose.evaluation.significance import deflated_sharpe, expected_max_sharpe
 from greenclose.evaluation.sweeps import COST_MULTIPLIERS, HOLD_PERIODS, K_VALUES, decision_cells
 from greenclose.models.calibrate import CalibrationPair, Calibrator
+from greenclose.models.train import _day_rank_ic, _nanmean
+from greenclose.ops.research_log import ResearchLog, Trial, distinct
 
 # ----------------------------------------------------------------------------- calibration
 
@@ -305,3 +309,68 @@ def test_forward_backfill_fills_only_observable_outcomes(app_config: AppConfig) 
     # excess versus the universe must be zero-mean within each date by construction
     for _, g in known.groupby("date"):
         assert abs(float(g["excess_vs_universe"].mean())) < 1e-12
+
+
+# ----------------------------------------------------------------------------- the trial counter
+
+
+def test_re_running_a_configuration_does_not_inflate_the_dsr_trial_count(tmp_path: Path) -> None:
+    """N counts configurations tried, not times run.
+
+    A run that is interrupted and restarted, or repeated after an optimisation that leaves the
+    numbers untouched, must not deflate the Sharpe ratio for work nobody did.
+    """
+    log = ResearchLog(tmp_path / "research_log.jsonl")
+    trial = Trial(
+        description="R3_ridge_s0: Rung 3: ridge on demeaned forward return",
+        family="ladder",
+        config_hash="abc",
+        snapshot_id="2026-01-01T000000",
+        git_sha="deadbeef",
+        seed=0,
+        oos_sharpe=0.9,
+    )
+    log.append(trial)
+    log.append(replace(trial, git_sha="cafef00d", oos_sharpe=0.9))  # same experiment, newer code
+
+    assert log.count() == 2, "the file stays append-only: both runs are on the record"
+    assert log.count(dsr_only=True) == 1, "but one configuration was tried, not two"
+    assert log.sharpes() == [0.9]
+
+    log.append(replace(trial, seed=1))
+    log.append(replace(trial, description="R4_lgbm_huber_s0: Rung 4"))
+    assert log.count(dsr_only=True) == 3, "a new seed and a new rung are each a new trial"
+
+
+def test_distinct_keeps_the_most_recent_row_for_a_configuration() -> None:
+    rows = [
+        {"description": "d", "family": "ladder", "config_hash": "h", "snapshot_id": "s", "seed": 0,
+         "touched_holdout": False, "oos_ic": 0.01},
+        {"description": "d", "family": "ladder", "config_hash": "h", "snapshot_id": "s", "seed": 0,
+         "touched_holdout": False, "oos_ic": 0.02},
+    ]
+    assert [r["oos_ic"] for r in distinct(rows)] == [0.02]
+
+
+# ------------------------------------------------------------------- degenerate in-fold rank IC
+
+
+def test_day_rank_ic_is_nan_without_warning_when_a_candidate_predicts_one_number() -> None:
+    """A grid cell that predicts a constant has no rank variance.
+
+    Left to pandas this reaches np.corrcoef, which divides by a zero standard deviation and warns on
+    stderr. One such line was enough to abort the whole run under PowerShell's error handling, so the
+    degenerate case is answered here instead of being discovered by numpy.
+    """
+    flat = pd.DataFrame({"p": [1.0, 1.0, 1.0, 1.0], "y": [0.3, -0.1, 0.2, 0.4]})
+    with np.errstate(all="raise"), warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert math.isnan(_day_rank_ic(flat))
+        assert math.isnan(_day_rank_ic(flat.rename(columns={"p": "y", "y": "p"})))
+        assert math.isnan(_day_rank_ic(flat.iloc[:2]))  # too few names to rank
+        assert math.isnan(_nanmean([math.nan, math.nan]))
+        assert math.isnan(_nanmean([]))
+
+    ranked = pd.DataFrame({"p": [1.0, 2.0, 3.0, 4.0], "y": [0.1, 0.2, 0.3, 0.4]})
+    assert _day_rank_ic(ranked) == pytest.approx(1.0)
+    assert _nanmean([1.0, math.nan, 3.0]) == pytest.approx(2.0)

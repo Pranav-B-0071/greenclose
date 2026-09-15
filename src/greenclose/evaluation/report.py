@@ -27,7 +27,7 @@ from greenclose.evaluation import charts
 from greenclose.evaluation.baselines import PLANNING_SLIPPAGE_BPS
 from greenclose.evaluation.significance import deflated_sharpe
 from greenclose.ops.provenance import git_sha, utc_now_iso
-from greenclose.ops.research_log import ResearchLog
+from greenclose.ops.research_log import ResearchLog, distinct
 
 TICK_PASS = "&#10003;"
 TICK_FAIL = "&#10007;"
@@ -213,9 +213,10 @@ def build_criteria(inp: ReportInputs, headline: dict[str, Any]) -> list[Criterio
 
 def compute_dsr(inp: ReportInputs, headline: dict[str, Any]) -> dict[str, float]:
     """Deflated Sharpe with the honest trial count read from research_log (brief invariant 9)."""
+    tried = distinct(inp.research_log)  # one row per configuration, not per time it was run
     sharpes = [
         float(r["oos_sharpe"])
-        for r in inp.research_log
+        for r in tried
         if r.get("oos_sharpe") is not None
         and r.get("counts_for_dsr", True)
         and r["oos_sharpe"] == r["oos_sharpe"]
@@ -231,7 +232,7 @@ def compute_dsr(inp: ReportInputs, headline: dict[str, Any]) -> dict[str, float]
     n_obs = int(fb.get("n_days", 0) or 0)
     skew = fb.get("skew", 0.0) or 0.0
     kurt = fb.get("kurtosis", 3.0) or 3.0
-    n_trials = sum(1 for r in inp.research_log if r.get("counts_for_dsr", True))
+    n_trials = sum(1 for r in tried if r.get("counts_for_dsr", True))
     if sr_hat != sr_hat or n_obs < 2:
         return {"dsr": math.nan, "sr0": 0.0, "n_trials": float(n_trials), "n_sharpes": float(len(sharpes))}
     return deflated_sharpe(

@@ -11,6 +11,7 @@ inside the training window selects hyperparameters; the fixed grid lives in conf
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 
@@ -86,6 +87,29 @@ class ModelRun:
     hparam_schedule: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
+def _day_rank_ic(d: pd.DataFrame) -> float:
+    """Spearman IC for one date, or NaN when either side has no rank variance.
+
+    A candidate that predicts the same number for every stock on a day is a real outcome of a
+    restrictive grid cell, not an error. Left to pandas it reaches ``np.corrcoef``, which divides by
+    a zero standard deviation and warns on stderr -- and a warning on stderr is enough to abort a
+    PowerShell run. Say NaN here instead, which is what the division would have produced anyway.
+    """
+    if len(d) < 3:
+        return math.nan
+    p, y = d["p"].rank(), d["y"].rank()
+    if p.nunique() < 2 or y.nunique() < 2:
+        return math.nan
+    return float(p.corr(y))
+
+
+def _nanmean(values: np.ndarray | list[float]) -> float:
+    """Mean of the non-NaN entries; NaN for an empty or all-NaN input, without the warning."""
+    arr = np.asarray(values, dtype="float64")
+    arr = arr[~np.isnan(arr)]
+    return float(arr.mean()) if arr.size else math.nan
+
+
 def _cv_score(
     head: Any,
     pre_cfg: float,
@@ -104,11 +128,9 @@ def _cv_score(
         model = head.fit(pre.transform_X(X[tr]), pre.transform_y(y[tr]), groups[tr], seed=seed)
         pred = head.predict(model, pre.transform_X(X[va]))["score"].to_numpy()
         df = pd.DataFrame({"g": groups[va], "p": pred, "y": y[va]})
-        ic = df.groupby("g").apply(
-            lambda d: d["p"].rank().corr(d["y"].rank()) if len(d) > 2 else np.nan, include_groups=False
-        )
-        scores.append(float(np.nanmean(ic.to_numpy())))
-    return float(np.nanmean(scores))
+        ic = df.groupby("g").apply(_day_rank_ic, include_groups=False)
+        scores.append(_nanmean(ic.to_numpy()))
+    return _nanmean(scores)
 
 
 def walk_forward_predict(

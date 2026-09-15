@@ -32,6 +32,21 @@ class Trial:
     logged_at: str = field(default_factory=utc_now_iso)
 
 
+# A configuration is identified by what was tried, not by how many times it was run. Re-evaluating
+# the same rung, seed and snapshot -- after a code change, or because a run was interrupted -- is not
+# a new trial, and counting it twice would deflate the Sharpe ratio for work nobody did. The file
+# stays append-only so the audit trail is complete; only the counting is de-duplicated.
+IDENTITY_FIELDS = ("description", "family", "config_hash", "snapshot_id", "seed", "touched_holdout")
+
+
+def distinct(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The most recent row for each distinct configuration, in first-seen order."""
+    out: dict[tuple[str, ...], dict[str, Any]] = {}
+    for row in rows:
+        out[tuple(str(row.get(k)) for k in IDENTITY_FIELDS)] = row
+    return list(out.values())
+
+
 class ResearchLog:
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -51,14 +66,15 @@ class ResearchLog:
             return [json.loads(line) for line in fh if line.strip()]
 
     def count(self, *, dsr_only: bool = False) -> int:
+        """Rows written, or -- for DSR -- distinct configurations tried."""
         rows = self.rows()
         if dsr_only:
-            return sum(1 for r in rows if r.get("counts_for_dsr", True))
+            return sum(1 for r in distinct(rows) if r.get("counts_for_dsr", True))
         return len(rows)
 
     def sharpes(self) -> list[float]:
         return [
             float(r["oos_sharpe"])
-            for r in self.rows()
+            for r in distinct(self.rows())
             if r.get("oos_sharpe") is not None and r.get("counts_for_dsr", True)
         ]

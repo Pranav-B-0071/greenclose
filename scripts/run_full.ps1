@@ -50,8 +50,22 @@ function Step([string]$Name, [scriptblock]$Body) {
     Write-Host ""
     Write-Host "=== $Name  (started $($t0.ToString('HH:mm:ss')))" -ForegroundColor Cyan
     "=== $Name  started $($t0.ToString('o'))" | Add-Content $log
-    & $Body 2>&1 | Tee-Object -FilePath $log -Append
-    if ($LASTEXITCODE -ne 0 -and $null -ne $LASTEXITCODE) {
+
+    # Windows PowerShell wraps every line a native program writes to stderr in an ErrorRecord, so
+    # under ErrorActionPreference=Stop one library warning on stderr would abort an hour-long run
+    # that was otherwise going fine. The process exit code is the only honest success signal, so
+    # relax the preference around the call and check that instead. "$_" flattens each record back to
+    # the line the program actually printed, which is what belongs in the log.
+    $global:LASTEXITCODE = 0
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & $Body 2>&1 | ForEach-Object { "$_" } | Tee-Object -FilePath $log -Append
+    } finally {
+        $ErrorActionPreference = $prev
+    }
+
+    if ($LASTEXITCODE -ne 0) {
         throw "$Name failed with exit code $LASTEXITCODE. See $log"
     }
     $mins = [Math]::Round(((Get-Date) - $t0).TotalMinutes, 1)
@@ -79,7 +93,7 @@ Write-Host "GREENCLOSE full run. jobs=$Jobs  B0 sims=$B0Sims" -ForegroundColor Y
 Write-Host "log: $log"
 
 if (-not $SkipLadder) {
-    Step "P7 model ladder, rungs 3-8, 5 seeds, plus the H2 experiment (~35 min)" {
+    Step "P7 model ladder, rungs 3-8, 5 seeds, plus the H2 experiment (~35 min, ~15 if cached)" {
         uv run greenclose ladder --rungs 3-8 --jobs $Jobs
     }
 }
@@ -94,13 +108,16 @@ if (-not $SkipSweeps) {
 }
 
 if (-not $SkipBaselines) {
-    Step "P5 baselines with the full B0 null distribution, `$B0Sims simulations (~25 min)" {
+    Step "P5 baselines with the full B0 null distribution, $B0Sims simulations (~25 min)" {
         uv run greenclose baselines --b0-sims $B0Sims --jobs $Jobs
     }
 }
 
-Step "P9 pin the forward model and write tonight's prediction log" {
+Step "P9 pin the forward model" {
     uv run greenclose pin-model --head lgbm_huber --reason "pinned by run_full.ps1"
+}
+
+Step "P9 write tonight's forward prediction log" {
     uv run greenclose forward
 }
 
