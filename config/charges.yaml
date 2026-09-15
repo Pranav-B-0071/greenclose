@@ -1,0 +1,28 @@
+# Verified against https://zerodha.com/charges/ on 2026-08-30. RE-VERIFY BEFORE USE.
+as_of: "2026-08-30"
+source: "https://zerodha.com/charges/"
+delivery_cnc:
+  brokerage_pct: 0.0
+  stt_buy_pct: 0.001          # 0.1%
+  stt_sell_pct: 0.001         # 0.1%
+  stamp_buy_pct: 0.00015      # 0.015%
+  exchange_txn_pct: 0.0000307 # 0.00307% NSE, both legs
+  sebi_pct: 0.000001          # Rs 10 per crore
+  ipft_pct: 0.000001          # Rs 10 per crore (VERIFY)
+  gst_pct: 0.18               # on (brokerage + exchange_txn + sebi + ipft)
+  dp_charge_flat: 15.34       # Rs per scrip per SELL day, GST inclusive
+intraday_mis:
+  brokerage_per_order: {pct: 0.0003, cap: 20.0}   # min(0.03%, Rs 20) per executed order
+  stt_buy_pct: 0.0
+  stt_sell_pct: 0.00025       # 0.025% sell side only
+  stamp_buy_pct: 0.00003      # 0.003%
+  exchange_txn_pct: 0.0000307
+  sebi_pct: 0.000001
+  ipft_pct: 0.000001
+  gst_pct: 0.18
+  dp_charge_flat: 0.0
+slippage:
+  base_bps: 2.0
+  impact_coef: 0.5            # bps = base + coef * daily_vol_bps * sqrt(order_value / adv_value)
+  min_bps: 1.0
+  high_vol_multiplier: 2.0    # applied when nifty_vol_20d is in its top decile

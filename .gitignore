@@ -1,0 +1,19 @@
+# environments / caches
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+*.egg-info/
+dist/
+build/
+.env
+mlruns/
+
+# data and generated reports are never committed
+data/*
+!data/.gitkeep
+reports/*
+!reports/.gitkeep

@@ -1,0 +1,65 @@
+# GREENCLOSE base configuration. Every key is validated; an unknown key is an error.
+project: greenclose
+mode: paper_only            # no broker, no orders, no money. Ever.
+
+data:
+  start: "2015-01-01"
+  source: yfinance
+  suffix: ".NS"
+  benchmark: "^NSEI"
+  vix: "^INDIAVIX"          # used only if coverage >= vix_min_coverage, else omitted
+  min_symbols_per_day: 40   # a day with fewer symbols is skipped entirely
+  vix_min_coverage: 0.99
+
+holdout:
+  start: "2024-09-16"       # dates >= this are locked; touched exactly once (P10)
+
+features:
+  winsor_pct: [0.01, 0.99]  # cross-sectional winsorisation before ranking
+  n_clusters: 8             # correlation clusters for the selection constraint
+  corr_window: 60
+
+labels:
+  horizon_days: 1
+  horizon: c2c              # c2c | c2o | o2c
+  primary: y_demeaned
+  winsor_sigma: 5.0         # applied inside the training fold only
+
+walk_forward:
+  min_train_years: 3
+  retrain: monthly
+  rolling_years: null       # null = expanding window; 2 = rolling 2-year variant
+  purge_days: 1
+  embargo_days: 5
+  cv_folds: 3
+  hparam_reselect_months: 12
+
+seeds: [0, 1, 2, 3, 4]
+
+simulation:
+  capital: 1000000          # Rs 10,00,000
+  position_size: 100000     # Rs 1,00,000 per position
+  product: CNC              # CNC (delivery) | MIS (intraday)
+  cost_multiplier: 1.0
+  slippage_override_bps: null
+
+strategy:
+  k: 3
+  select_from: top          # top | bottom (bottom is used by the reversal baseline)
+  sizing: inverse_vol       # inverse_vol | equal
+  min_position: 50000
+  max_position_pct: 0.40
+  liquidity_cap_bps_adv: 10.0
+  sector_max: 1
+  cluster_max: 1
+  rebalance_mode: overlap   # overlap (do not sell what you would rebuy) | fixed (1-day reference)
+  rebalance_frequency: daily
+  hold_days: 1
+  abstain:
+    enabled: true
+    buffer_bps: 5.0
+
+report:
+  ic_t_bar: 3.0
+  costs_gross_max: 0.50
+  dsr_bar: 0.95

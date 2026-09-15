@@ -1,0 +1,64 @@
+"""The multiple-testing counter (brief invariant 9).
+
+One JSON line per configuration evaluated out of sample. The row count is `N` in the Deflated Sharpe
+Ratio. If a configuration was evaluated and is not here, no result that depends on it is valid.
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any
+
+from greenclose.ops.provenance import utc_now_iso
+
+
+@dataclass(slots=True)
+class Trial:
+    description: str
+    family: str  # baseline | ladder | grid | sweep | h2 | leakage | holdout | forward
+    config_hash: str
+    snapshot_id: str
+    git_sha: str
+    seed: int
+    oos_ic: float | None = None
+    oos_sharpe: float | None = None
+    oos_net_return_pa: float | None = None
+    n_days: int | None = None
+    touched_holdout: bool = False
+    counts_for_dsr: bool = True
+    extra: dict[str, Any] = field(default_factory=dict)
+    logged_at: str = field(default_factory=utc_now_iso)
+
+
+class ResearchLog:
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+
+    def append(self, trial: Trial) -> int:
+        record = asdict(trial)
+        record["trial_id"] = self.count() + 1
+        with self.path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, sort_keys=True, default=str) + "\n")
+        return int(record["trial_id"])
+
+    def rows(self) -> list[dict[str, Any]]:
+        if not self.path.exists():
+            return []
+        with self.path.open("r", encoding="utf-8") as fh:
+            return [json.loads(line) for line in fh if line.strip()]
+
+    def count(self, *, dsr_only: bool = False) -> int:
+        rows = self.rows()
+        if dsr_only:
+            return sum(1 for r in rows if r.get("counts_for_dsr", True))
+        return len(rows)
+
+    def sharpes(self) -> list[float]:
+        return [
+            float(r["oos_sharpe"])
+            for r in self.rows()
+            if r.get("oos_sharpe") is not None and r.get("counts_for_dsr", True)
+        ]

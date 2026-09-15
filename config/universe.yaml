@@ -1,0 +1,17 @@
+# config/universe.yaml -- the frozen 50. Never changed mid-experiment.
+# Symbols that fail data validation (P2) are moved to `dropped:` with the reason; nothing else is edited.
+fixed_as_of: "2026-09-15"
+benchmark: "^NSEI"          # NIFTY 50
+suffix: ".NS"
+universe:
+  financials:   [HDFCBANK, ICICIBANK, SBIN, KOTAKBANK, AXISBANK, BAJFINANCE, HDFCLIFE, SBILIFE]
+  it:           [TCS, INFY, HCLTECH, WIPRO, TECHM]
+  energy:       [RELIANCE, ONGC, BPCL, IOC, GAIL]
+  auto:         [MARUTI, TATAMOTORS, M&M, BAJAJ-AUTO, EICHERMOT, HEROMOTOCO]
+  pharma:       [SUNPHARMA, DRREDDY, CIPLA, DIVISLAB, AUROPHARMA]
+  fmcg:         [HINDUNILVR, ITC, NESTLEIND, BRITANNIA, DABUR, TATACONSUM]
+  metals:       [TATASTEEL, JSWSTEEL, HINDALCO, VEDL, COALINDIA]
+  materials:    [ULTRACEMCO, GRASIM, AMBUJACEM]
+  infra_power:  [LT, NTPC, POWERGRID, ADANIPORTS]
+  consumer:     [TITAN, ASIANPAINT, BHARTIARTL]
+dropped: {}

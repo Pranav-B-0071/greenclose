@@ -1,0 +1,22 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: uv sync --all-groups
+      - name: Lint
+        run: uv run ruff check src tests scripts
+      - name: Type-check decision path (strict)
+        run: uv run mypy -p greenclose.domain -p greenclose.strategy --strict
+      - name: Tests including the leakage suite (offline, synthetic fixture)
+        run: uv run pytest

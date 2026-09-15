@@ -1,0 +1,13 @@
+# NSE session times for F&O-eligible names after the Closing Auction Session went live (3 Aug 2026).
+timezone: Asia/Kolkata
+session:
+  continuous_open: "09:15"
+  continuous_close: "15:15"     # information cut-off for this project
+  cas_order_entry_start: "15:20"
+  cas_close: "15:30"
+information_cutoff: "15:15"
+close_proxy_note: >
+  The daily close from the data source is used as a proxy for the closing-auction equilibrium price.
+  On a real exchange the two may differ. This is a known approximation and is stated in every report.
+# The trading-day calendar is reconstructed from the data itself; this holiday list is informational only.
+holidays: []

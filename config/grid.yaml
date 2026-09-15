@@ -1,0 +1,12 @@
+# Fixed hyperparameter grid (brief section 10.1). Do not expand it. Every cell counts toward the
+# multiple-testing penalty and is logged to research/research_log.jsonl.
+lightgbm:
+  num_leaves:       [15, 31, 63]
+  min_data_in_leaf: [20, 50, 100]
+  learning_rate:    [0.02, 0.05]
+  feature_fraction: [0.6, 0.8]
+  bagging_fraction: [0.7]
+  lambda_l2:        [1.0, 10.0]
+  n_estimators:     [300, 600]        # with early stopping on the purged validation fold
+ridge:
+  alpha: [0.1, 1.0, 10.0, 100.0]
