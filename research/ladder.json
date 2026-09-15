@@ -1,0 +1,75 @@
+{
+  "snapshot_id": "2026-09-15T122218",
+  "git_sha": "1dcdd0d6c4",
+  "config_hash": "6a11e17defb5",
+  "seeds": [
+    0,
+    1
+  ],
+  "oos_days": 1654,
+  "oos_start": "2018-01-01",
+  "oos_end": "2024-09-13",
+  "table": [
+    {
+      "name": "R3 ridge",
+      "ic_mean": 0.03516642118075644,
+      "ic_t_nw": 8.308690406776263,
+      "ic_ci_lo": 0.02707924394028941,
+      "ic_ci_hi": 0.043239610414697954,
+      "lift_at_3": 0.026564389359129366,
+      "decile_spread_bps": 9.656033154643126,
+      "gross_pa": 0.0,
+      "net_pa": 0.0,
+      "net_ci_lo": 0.0,
+      "net_ci_hi": 0.0,
+      "sharpe": NaN,
+      "max_dd": 0.0,
+      "costs_over_gross": NaN,
+      "turnover_pa": 0.0,
+      "n_trades": 0.0,
+      "missed_rate": 0.0,
+      "n_days": 1654.0,
+      "gross_bps_inv": NaN,
+      "net_bps_inv": NaN,
+      "deployment": NaN,
+      "ic_sd": 0.0,
+      "n_seeds": 2.0
+    },
+    {
+      "name": "R3 logistic_beat",
+      "ic_mean": 0.03935112233088053,
+      "ic_t_nw": 8.495956872952016,
+      "ic_ci_lo": 0.02951367276705521,
+      "ic_ci_hi": 0.047583306263644466,
+      "lift_at_3": 0.029587363966142664,
+      "decile_spread_bps": 10.26066641915459,
+      "gross_pa": 0.0832591187136501,
+      "net_pa": -0.07382601448257932,
+      "net_ci_lo": -0.15848991035534876,
+      "net_ci_hi": -0.038121845981038016,
+      "sharpe": -1.140372277629287,
+      "max_dd": -0.5206447689410818,
+      "costs_over_gross": 1.8867018486766083,
+      "turnover_pa": 144.04005775971964,
+      "n_trades": 7065.0,
+      "missed_rate": 0.0,
+      "n_days": 1654.0,
+      "gross_bps_inv": 11.575456456857406,
+      "net_bps_inv": -10.263978639571125,
+      "deployment": 0.3893379250961433,
+      "ic_sd": 0.0,
+      "n_seeds": 2.0
+    }
+  ],
+  "comparisons": {
+    "logistic_beat vs ridge": {
+      "diff": 0.004184701150124087,
+      "lo": -0.0012284645377696266,
+      "hi": 0.00944448961396464,
+      "seed_spread": 0.0,
+      "verdict": "not beaten"
+    }
+  },
+  "h2": [],
+  "h2_comparisons": {}
+}

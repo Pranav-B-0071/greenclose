@@ -64,10 +64,15 @@ def paired_bootstrap_diff(
     return {"diff": float(d.mean()) if len(d) else math.nan, "lo": lo, "hi": hi, "n": float(len(d))}
 
 
-def expected_max_sharpe(sharpes: Sequence[float]) -> float:
-    """SR0 of Bailey & Lopez de Prado (2014): expected max Sharpe among N trials under the null."""
-    n = len(sharpes)
-    if n <= 1:
+def expected_max_sharpe(sharpes: Sequence[float], n_trials: int | None = None) -> float:
+    """SR0 of Bailey & Lopez de Prado (2014): expected max Sharpe among N trials under the null.
+
+    `sharpes` estimates the variance of Sharpe across trials; `n_trials` is the honest count of
+    configurations tried, which is larger whenever a trial produced no Sharpe (a configuration that
+    abstained on every day, say). Understating N would flatter the Deflated Sharpe Ratio.
+    """
+    n = int(n_trials) if n_trials else len(sharpes)
+    if n <= 1 or len(sharpes) <= 1:
         return 0.0
     v = float(np.var(np.asarray(sharpes, dtype="float64"), ddof=1))
     if v <= 0:
@@ -77,19 +82,31 @@ def expected_max_sharpe(sharpes: Sequence[float]) -> float:
 
 
 def deflated_sharpe(
-    sr_hat: float, *, n_obs: int, skew: float, kurt: float, sharpes_tried: Sequence[float]
+    sr_hat: float,
+    *,
+    n_obs: int,
+    skew: float,
+    kurt: float,
+    sharpes_tried: Sequence[float],
+    n_trials: int | None = None,
 ) -> dict[str, float]:
     """DSR = Phi[(SR^ - SR0) sqrt(T-1) / sqrt(1 - g3 SR^ + (g4-1)/4 SR^^2)], all per-period units.
 
     `kurt` is the non-excess kurtosis. A DSR below 0.95 means the observed Sharpe is not distinguishable
     from the best expected by chance given how many configurations were tried.
     """
-    sr0 = expected_max_sharpe(sharpes_tried)
+    sr0 = expected_max_sharpe(sharpes_tried, n_trials)
     denom = 1.0 - skew * sr_hat + (kurt - 1.0) / 4.0 * sr_hat**2
     if n_obs < 2 or denom <= 0 or math.isnan(sr_hat):
-        return {"dsr": math.nan, "sr0": sr0, "n_trials": float(len(sharpes_tried))}
+        return {"dsr": math.nan, "sr0": sr0, "n_trials": float(n_trials or len(sharpes_tried))}
     z = (sr_hat - sr0) * math.sqrt(n_obs - 1) / math.sqrt(denom)
-    return {"dsr": float(stats.norm.cdf(z)), "sr0": sr0, "n_trials": float(len(sharpes_tried)), "z": float(z)}
+    return {
+        "dsr": float(stats.norm.cdf(z)),
+        "sr0": sr0,
+        "n_trials": float(n_trials or len(sharpes_tried)),
+        "n_sharpes": float(len(sharpes_tried)),
+        "z": float(z),
+    }
 
 
 def spa_pvalue(
