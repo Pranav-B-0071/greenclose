@@ -1,0 +1,32 @@
+[
+  {
+    "asof": "2024-01-10",
+    "decision_id": "2024-01-10-S9-SELL",
+    "notional": 90000.0,
+    "product": "CNC",
+    "qty": 600,
+    "reason": "dropped out of top-K",
+    "side": "SELL",
+    "symbol": "S9"
+  },
+  {
+    "asof": "2024-01-10",
+    "decision_id": "2024-01-10-S0-BUY",
+    "notional": 85700.0,
+    "product": "CNC",
+    "qty": 857,
+    "reason": "rank 2 entry",
+    "side": "BUY",
+    "symbol": "S0"
+  },
+  {
+    "asof": "2024-01-10",
+    "decision_id": "2024-01-10-S5-BUY",
+    "notional": 114240.0,
+    "product": "CNC",
+    "qty": 952,
+    "reason": "rank 6 entry",
+    "side": "BUY",
+    "symbol": "S5"
+  }
+]

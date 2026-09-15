@@ -171,6 +171,54 @@ def labels(
 
 
 @app.command()
+def baselines(
+    snapshot: str | None = typer.Option(None, help="Snapshot id (default: latest)"),
+    b0_sims: int = typer.Option(1000, help="Number of uniform-random simulations for B0"),
+    n_boot: int = typer.Option(10_000, help="Stationary-bootstrap resamples for confidence intervals"),
+    jobs: int = typer.Option(1, help="Worker processes for the B0 null distribution"),
+) -> None:
+    """Run baselines B0-B5 through the shared decision layer on the common out-of-sample window."""
+    import time
+
+    from greenclose.backtest.engine import DayPanel
+    from greenclose.evaluation.baselines import format_table, run_baselines
+    from greenclose.ops.research_log import ResearchLog
+    from greenclose.pipeline_io import load_features, load_labels, open_store
+
+    cfg, paths = load_config(), Paths()
+    store = open_store(paths, snapshot)
+    feats = load_features(paths, store.snapshot_id)
+    labels_df = load_labels(paths, store.snapshot_id, cfg.base.labels.horizon_days, cfg.base.labels.horizon)
+    panel = DayPanel.from_features(feats)
+    idx = store.get_index(cutoff=feats.index.get_level_values("date").max())
+    nifty = idx.loc[idx["symbol"] == cfg.base.data.benchmark].set_index("date")["close"]
+    log = ResearchLog(paths.research_dir / "research_log.jsonl")
+    t0 = time.perf_counter()
+    table, b0 = run_baselines(
+        cfg,
+        paths,
+        panel=panel,
+        labels=labels_df,
+        nifty_close=nifty,
+        snapshot_id=store.snapshot_id,
+        b0_sims=b0_sims,
+        n_boot=n_boot,
+        log=log,
+        n_universe=len(cfg.universe.symbols),
+        jobs=jobs,
+    )
+    oos = panel.oos_dates(
+        min_train_years=cfg.base.walk_forward.min_train_years,
+        start=cfg.base.data.start,
+        holdout_start=cfg.base.holdout.start,
+    )
+    typer.echo(f"OOS window: {oos[0].date()} .. {oos[-1].date()} ({len(oos)} days)")
+    typer.echo(format_table(table))
+    typer.echo(f"research_log rows: {log.count()}  (counting for DSR: {log.count(dsr_only=True)})")
+    typer.echo(f"elapsed {time.perf_counter() - t0:.0f}s")
+
+
+@app.command()
 def snapshots() -> None:
     """List snapshots with their content hashes."""
     from greenclose.ingest.snapshots import list_snapshots, read_manifest

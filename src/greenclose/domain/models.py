@@ -140,6 +140,12 @@ class PortfolioState:
     cash_unsettled: float
     positions: tuple[Position, ...] = field(default_factory=tuple)
     equity: float = 0.0
+    prev_asof: date | None = None  # previous trading date; None on the first day of a run
+    values: dict[str, float] = field(default_factory=dict)  # current value per held symbol
+
+    @property
+    def is_first_day_of_month(self) -> bool:
+        return self.prev_asof is None or self.prev_asof.month != self.asof.month
 
     @property
     def held_symbols(self) -> frozenset[str]:
