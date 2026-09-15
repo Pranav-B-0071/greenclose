@@ -14,3 +14,9 @@ ROOT = Path(__file__).resolve().parents[1]
 @pytest.fixture(scope="session")
 def app_config() -> AppConfig:
     return load_config(Paths(root=ROOT))
+
+
+@pytest.fixture(scope="session")
+def synth_config(app_config: AppConfig) -> AppConfig:
+    """Project config with the per-day symbol minimum lowered for small synthetic panels."""
+    return app_config.override({"base.data.min_symbols_per_day": 20})

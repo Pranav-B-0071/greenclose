@@ -101,6 +101,54 @@ def validate(
 
 
 @app.command()
+def features(
+    snapshot: str | None = typer.Option(None, help="Snapshot id (default: latest)"),
+    check_truncation: int = typer.Option(0, help="Also verify truncation invariance at N random cut-offs"),
+) -> None:
+    """Build the point-in-time feature panel at the last available date and cache it under data/features."""
+    import time
+
+    import numpy as np
+    import pandas as pd
+
+    from greenclose.features.build import build, nan_report
+    from greenclose.ingest.store import ParquetBarStore
+
+    cfg, paths = load_config(), Paths()
+    store = ParquetBarStore.open(paths.data_dir / "snapshots", snapshot)
+    last = pd.Timestamp(store.trading_dates(cutoff=pd.Timestamp.max.normalize() - pd.Timedelta(days=1))[-1])
+    t0 = time.perf_counter()
+    panel = build(last, store, cfg.universe, cfg)
+    dt = time.perf_counter() - t0
+    out_dir = paths.data_dir / "features"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / f"{store.snapshot_id}__{panel.registry_version}.parquet"
+    panel.frame.to_parquet(out)
+    typer.echo(f"snapshot {store.snapshot_id}  registry {panel.registry_version}  built in {dt:.1f}s")
+    typer.echo(
+        f"rows {len(panel.frame)}  dates {panel.frame.index.get_level_values(0).nunique()}  "
+        f"symbols {panel.frame.index.get_level_values(1).nunique()}"
+    )
+    typer.echo(
+        f"model features {panel.n_model_features} (tier1 {len(panel.tier1)}, tier2 {len(panel.tier2)})"
+        f"  omitted {panel.omitted}  skipped days {len(panel.skipped_days)}"
+    )
+    typer.echo(nan_report(panel).to_string())
+    typer.echo(f"saved {out}")
+    if check_truncation > 0:
+        dates = panel.frame.index.get_level_values(0).unique()
+        rng = np.random.default_rng(13)
+        picks = sorted(rng.choice(np.arange(300, len(dates) - 1), size=check_truncation, replace=False))
+        for i in picks:
+            t = pd.Timestamp(dates[i])
+            part = build(t, store, cfg.universe, cfg).frame
+            expected = panel.frame.loc[panel.frame.index.get_level_values(0) <= t]
+            pd.testing.assert_frame_equal(part, expected, check_exact=True, obj=f"cutoff={t.date()}")
+            typer.echo(f"truncation invariance at {t.date()}: identical ({len(part)} rows)")
+        typer.echo(f"TRUNCATION INVARIANCE: PASS for {check_truncation} random cut-offs")
+
+
+@app.command()
 def snapshots() -> None:
     """List snapshots with their content hashes."""
     from greenclose.ingest.snapshots import list_snapshots, read_manifest

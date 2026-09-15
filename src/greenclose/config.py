@@ -50,6 +50,7 @@ class FeaturesCfg(Strict):
     winsor_pct: tuple[float, float] = (0.01, 0.99)
     n_clusters: int = 8
     corr_window: int = 60
+    exclude: list[str] = []  # registered features to leave out; a config decision, never a data-driven one
 
 
 class LabelsCfg(Strict):
