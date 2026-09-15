@@ -149,6 +149,28 @@ def features(
 
 
 @app.command()
+def labels(
+    snapshot: str | None = typer.Option(None, help="Snapshot id (default: latest)"),
+    horizon_days: int | None = typer.Option(None, help="Forward horizon in trading days (default: config)"),
+) -> None:
+    """Compute the six label variants aligned to the cached feature panel and save them under data/labels."""
+    from greenclose.labels.targets import build_labels, summarise
+    from greenclose.pipeline_io import load_features, open_store
+
+    cfg, paths = load_config(), Paths()
+    store = open_store(paths, snapshot)
+    feats = load_features(paths, store.snapshot_id)
+    lp = build_labels(feats, store, cfg, horizon_days=horizon_days)
+    out_dir = paths.data_dir / "labels"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / f"{store.snapshot_id}__h{lp.horizon_days}_{lp.base}.parquet"
+    lp.frame.to_parquet(out)
+    typer.echo(f"snapshot {store.snapshot_id}  horizon {lp.horizon_days}d  base {lp.base}")
+    typer.echo(summarise(lp).to_string())
+    typer.echo(f"saved {out}")
+
+
+@app.command()
 def snapshots() -> None:
     """List snapshots with their content hashes."""
     from greenclose.ingest.snapshots import list_snapshots, read_manifest
