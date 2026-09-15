@@ -19,6 +19,14 @@ from greenclose.backtest.costs import CostModel
 from greenclose.domain.models import CostBreakdown, Fill, Intent, Position, Side
 
 
+def _finite(value: object) -> float | None:
+    """A float only when the source actually had one; missing and NaN both mean "not observed"."""
+    if value is None:
+        return None
+    f = float(value)  # type: ignore[arg-type]
+    return None if math.isnan(f) else f
+
+
 class SimBroker:
     def __init__(self, cost_model: CostModel, *, slippage_override_bps: float | None = None) -> None:
         self.cost_model = cost_model
@@ -35,19 +43,26 @@ class SimBroker:
     ) -> list[Fill]:
         fills: list[Fill] = []
         sold_today: set[str] = set()
+        # Read each column once for the whole day. Slicing a row per order looked harmless and was
+        # the single most expensive line in the simulator across a thousand replays.
+        closes = bars_today["close"].to_dict()
+        volumes = bars_today["volume"].to_dict()
+        advs = bars_today["traded_value_20d"].to_dict() if "traded_value_20d" in bars_today else {}
+        vols = bars_today["vol_20d"].to_dict() if "vol_20d" in bars_today else {}
+        adj_closes = bars_today["adj_close"].to_dict()
         for intent in intents:
             sym = intent.symbol
-            if sym not in bars_today.index:
+            if sym not in closes:
                 fills.append(self._missed(intent, asof, "no bar today"))
                 continue
-            row = bars_today.loc[sym]
-            close = float(row["close"])
-            volume = float(row["volume"]) if pd.notna(row["volume"]) else 0.0
+            close = float(closes[sym])
+            raw_volume = volumes.get(sym)
+            volume = float(raw_volume) if raw_volume is not None and raw_volume == raw_volume else 0.0
             if math.isnan(close) or close <= 0 or volume <= 0:
                 fills.append(self._missed(intent, asof, "zero volume / no trade today"))
                 continue
-            adv = float(row["traded_value_20d"]) if pd.notna(row.get("traded_value_20d")) else None
-            vol = float(row["vol_20d"]) if pd.notna(row.get("vol_20d")) else None
+            adv = _finite(advs.get(sym))
+            vol = _finite(vols.get(sym))
 
             if intent.side is Side.BUY:
                 qty = intent.qty
@@ -58,7 +73,7 @@ class SimBroker:
                     fills.append(self._missed(intent, asof, "no position to sell"))
                     continue
                 qty = min(intent.qty, pos.qty)
-                adj = float(row["adj_close"])
+                adj = float(adj_closes[sym])
                 notional = (qty / pos.qty) * pos.value_at(adj)
             if qty <= 0 or notional <= 0:
                 fills.append(self._missed(intent, asof, "zero quantity"))

@@ -116,7 +116,11 @@ class DayPanel:
     @classmethod
     def from_features(cls, features: pd.DataFrame, nifty_vol_col: str = "nifty_vol_20d") -> DayPanel:
         dates = pd.DatetimeIndex(features.index.get_level_values("date").unique()).sort_values()
-        by_date = {pd.Timestamp(d): g.droplevel("date") for d, g in features.groupby(level="date", sort=True)}
+        # Arrow-backed string columns cost more per element than the arithmetic around them, and the
+        # decision layer reads `sector` on every simulated day of every run. Convert once, here.
+        obj = {c: "object" for c in features.columns if not pd.api.types.is_numeric_dtype(features[c])}
+        frame = features.astype(obj) if obj else features
+        by_date = {pd.Timestamp(d): g.droplevel("date") for d, g in frame.groupby(level="date", sort=True)}
         if nifty_vol_col in features.columns:
             nv = features[nifty_vol_col].groupby(level="date").first().reindex(dates)
             threshold = nv.shift(1).expanding(min_periods=250).quantile(0.9)  # top decile, no look-ahead

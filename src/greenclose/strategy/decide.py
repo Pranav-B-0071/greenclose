@@ -76,31 +76,51 @@ class _Row:
 
 
 def _rows(features: pd.DataFrame, predictions: pd.DataFrame, config: DecisionConfig) -> list[_Row]:
+    """Today's cross-section as plain rows, ordered exactly as the selection rule wants to see it.
+
+    Deliberately free of pandas object churn: a join, an assign and a `sort_values` on a 48-row frame
+    cost more than everything else in the decision layer put together, and this runs once per
+    simulated day across thousands of runs. Extraction is by column to numpy, the ordering is a
+    stable sort over indices, and NaN scores sort last exactly as pandas would place them.
+    """
     missing = [c for c in REQUIRED_FEATURES if c not in features.columns]
     if missing:
         raise KeyError(f"features missing columns {missing}")
     if "score" not in predictions.columns:
         raise KeyError("predictions must have a 'score' column")
-    df = features.join(predictions, how="left")
-    has_edge = "expected_return_bps" in df.columns
-    ascending = config.select_from == "bottom"
-    df = df.assign(_sym=df.index.astype(str)).sort_values(
-        ["score", "_sym"], ascending=[ascending, True], kind="mergesort"
+
+    index = features.index
+    syms = [str(x) for x in index.to_numpy()]
+
+    def col(frame: pd.DataFrame, name: str, *, fill: float | None = None) -> np.ndarray:
+        series = frame[name] if name in frame.columns else None
+        if series is None:
+            return np.full(len(index), np.nan)
+        arr = series.to_numpy(dtype="float64", na_value=np.nan)
+        return arr if fill is None else np.nan_to_num(arr, nan=fill)
+
+    aligned = predictions if predictions.index.equals(index) else predictions.reindex(index)
+    score = col(aligned, "score")
+    edge_arr = col(aligned, "expected_return_bps") if "expected_return_bps" in aligned.columns else None
+    close = col(features, "close")
+    vol20 = col(features, "vol_20d")
+    tv20 = col(features, "traded_value_20d")
+    stale = col(features, "staleness_flag", fill=1.0)
+    volume = col(features, "volume", fill=0.0)
+    cluster_id = col(features, "cluster_id")
+    sector = [str(x) for x in features["sector"].to_numpy()]
+
+    # same ordering as sort_values(["score", symbol], ascending=[asc, True], na_position="last")
+    sign = 1.0 if config.select_from == "bottom" else -1.0
+    order = sorted(
+        range(len(index)),
+        key=lambda i: (1, 0.0, syms[i]) if math.isnan(score[i]) else (0, sign * score[i], syms[i]),
     )
-    # plain arrays: a per-cell pandas lookup is two orders of magnitude slower than this loop needs
-    syms = df["_sym"].to_numpy()
-    score = df["score"].to_numpy(dtype="float64", na_value=np.nan)
-    close = df["close"].to_numpy(dtype="float64", na_value=np.nan)
-    vol20 = df["vol_20d"].to_numpy(dtype="float64", na_value=np.nan)
-    tv20 = df["traded_value_20d"].to_numpy(dtype="float64", na_value=np.nan)
-    stale = np.nan_to_num(df["staleness_flag"].to_numpy(dtype="float64", na_value=np.nan), nan=1.0)
-    volume = np.nan_to_num(df["volume"].to_numpy(dtype="float64", na_value=np.nan), nan=0.0)
-    cluster_id = df["cluster_id"].to_numpy(dtype="float64", na_value=np.nan)
-    sector = df["sector"].astype(str).to_numpy()
-    edge_arr = df["expected_return_bps"].to_numpy(dtype="float64", na_value=np.nan) if has_edge else None
+
     out: list[_Row] = []
     rank = 0
-    for i in range(len(df)):
+    inverse_vol = config.sizing == "inverse_vol"
+    for i in order:
         sc = float(score[i])
         cl = float(close[i])
         vl = float(vol20[i])
@@ -111,25 +131,26 @@ def _rows(features: pd.DataFrame, predictions: pd.DataFrame, config: DecisionCon
             and cl > 0
             and volume[i] > 0
             and stale[i] == 0.0
-            and (config.sizing != "inverse_vol" or (not math.isnan(vl) and vl > 0))
+            and (not inverse_vol or (not math.isnan(vl) and vl > 0))
         )
         if has_score:
             rank += 1
-        sym = str(syms[i])
         cid = float(cluster_id[i])
-        cluster = f"solo:{sym}" if math.isnan(cid) else str(int(cid))
+        cluster = f"solo:{syms[i]}" if math.isnan(cid) else str(int(cid))
         edge: float | None = None
-        if edge_arr is not None and not math.isnan(float(edge_arr[i])):
-            edge = float(edge_arr[i])
+        if edge_arr is not None:
+            e = float(edge_arr[i])
+            if not math.isnan(e):
+                edge = e
         out.append(
             _Row(
-                symbol=sym,
+                symbol=syms[i],
                 rank=rank if has_score else 0,
                 score=sc,
                 close=cl,
                 vol_20d=vl,
                 traded_value_20d=float(tv20[i]),
-                sector=str(sector[i]),
+                sector=sector[i],
                 cluster=cluster,
                 tradeable=bool(tradeable),
                 edge_bps=edge,

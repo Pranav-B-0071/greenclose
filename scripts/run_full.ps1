@@ -3,7 +3,8 @@
     Run every remaining GREENCLOSE phase end to end and regenerate the report.
 
 .DESCRIPTION
-    One command, roughly 2 to 2.5 hours on a 16-core laptop. Safe to interrupt: the model ladder
+    One command. Roughly 1.5 hours on a 16-core laptop with memory free; longer if the pool
+    has to be small, because memory rather than cores is usually what limits it. Safe to interrupt: the model ladder
     caches its predictions, so re-running skips whatever already finished. Baselines and sweeps
     restart from scratch if interrupted.
 
@@ -13,7 +14,10 @@
     Paper only. Nothing in here can place an order.
 
 .PARAMETER Jobs
-    Worker processes. Default: half the logical cores, which leaves the machine usable.
+    Worker processes. Default 0, meaning choose automatically: each worker needs about 0.6 GB, so
+    the pool is sized from free memory first and cores second, keeping 1 GB of headroom. Per-worker
+    library threads are capped automatically, so more workers does not mean more thread thrashing.
+    Pass a number to override.
 
 .PARAMETER B0Sims
     Random simulations for the B0 null distribution. The brief asks for 1000.
@@ -25,7 +29,7 @@
 #>
 [CmdletBinding()]
 param(
-    [int]$Jobs = [Math]::Max(2, [Environment]::ProcessorCount / 2),
+    [int]$Jobs = 0,            # 0 = choose from free memory and cores, see below
     [int]$B0Sims = 1000,
     [switch]$SkipLadder,
     [switch]$SkipSweeps,
@@ -55,27 +59,42 @@ function Step([string]$Name, [scriptblock]$Body) {
     "=== $Name done in $mins min" | Add-Content $log
 }
 
+# Each worker holds its own feature panel and day slices: about 0.5 GB resident. Memory, not cores,
+# is what limits this machine, and a worker that swaps is far slower than one that waits. So size the
+# pool from free memory first and cores second.
+$WorkerGB = 0.6
+if ($Jobs -le 0) {
+    $freeGB  = (Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1MB
+    $byMem   = [Math]::Floor(($freeGB - 1.0) / $WorkerGB)      # keep 1 GB headroom for the OS
+    $byCores = [Environment]::ProcessorCount - 2
+    $Jobs    = [int][Math]::Max(2, [Math]::Min($byMem, $byCores))
+    Write-Host ("free memory {0:N1} GB -> {1} workers by memory, {2} by cores; using {3}" -f $freeGB, $byMem, $byCores, $Jobs)
+    if ($byMem -lt $byCores) {
+        Write-Host "  (closing browsers and editors before a long run buys you more workers)" -ForegroundColor DarkGray
+    }
+}
+
 $started = Get-Date
 Write-Host "GREENCLOSE full run. jobs=$Jobs  B0 sims=$B0Sims" -ForegroundColor Yellow
 Write-Host "log: $log"
 
 if (-not $SkipLadder) {
-    Step "P7 model ladder, rungs 3-8, 5 seeds, plus the H2 experiment (~50 min)" {
+    Step "P7 model ladder, rungs 3-8, 5 seeds, plus the H2 experiment (~35 min)" {
         uv run greenclose ladder --rungs 3-8 --jobs $Jobs
     }
 }
 
 if (-not $SkipSweeps) {
-    Step "P8 decision-layer sweeps: hold, K, cost multiplier, product, rebalance (~10 min)" {
+    Step "P8 decision-layer sweeps: hold, K, cost multiplier, product, rebalance (~6 min)" {
         uv run greenclose sweep --group decision
     }
-    Step "P8 retrain sweeps: C2C/C2O/O2C horizons, expanding vs 2-year rolling (~15 min)" {
+    Step "P8 retrain sweeps: C2C/C2O/O2C horizons, expanding vs 2-year rolling (~12 min)" {
         uv run greenclose sweep --group retrain
     }
 }
 
 if (-not $SkipBaselines) {
-    Step "P5 baselines with the full B0 null distribution, $B0Sims simulations (~70 min)" {
+    Step "P5 baselines with the full B0 null distribution, `$B0Sims simulations (~25 min)" {
         uv run greenclose baselines --b0-sims $B0Sims --jobs $Jobs
     }
 }
