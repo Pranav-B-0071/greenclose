@@ -219,6 +219,60 @@ def baselines(
 
 
 @app.command()
+def leakage(
+    snapshot: str | None = typer.Option(None, help="Snapshot id (default: latest)"),
+    n_truncation: int = typer.Option(10, help="Random cut-offs for the truncation-invariance check"),
+) -> None:
+    """Run the six leakage checks against the REAL snapshot. Phase 6 gates Phase 7."""
+    import json
+    import time
+
+    from greenclose.evaluation.leakage import run_suite
+    from greenclose.pipeline_io import load_features, load_labels, open_store
+
+    cfg, paths = load_config(), Paths()
+    store = open_store(paths, snapshot)
+    feats = load_features(paths, store.snapshot_id)
+    labels_df = load_labels(paths, store.snapshot_id, cfg.base.labels.horizon_days, cfg.base.labels.horizon)
+    model_columns = [c for c in feats.columns if c.endswith("_rk")] + [
+        c for c in feats.columns if c.startswith(("nifty_", "breadth", "xs_", "india_", "avg_pairwise"))
+    ]
+    t0 = time.perf_counter()
+    report = run_suite(
+        cfg,
+        paths,
+        store=store,
+        features=feats,
+        labels=labels_df,
+        model_columns=model_columns,
+        n_truncation=n_truncation,
+    )
+    typer.echo(report.summary())
+    typer.echo(f"elapsed {time.perf_counter() - t0:.0f}s")
+    out = paths.research_dir / "leakage_suite.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(
+        json.dumps(
+            {
+                "snapshot_id": report.snapshot_id,
+                "ran_at": report.ran_at,
+                "n_passed": report.n_passed,
+                "n_checks": len(report.checks),
+                "checks": [
+                    {"name": c.name, "passed": c.passed, "detail": c.detail, **c.numbers}
+                    for c in report.checks
+                ],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    typer.echo(f"saved {out}")
+    if not report.all_passed:
+        raise typer.Exit(code=1)
+
+
+@app.command()
 def snapshots() -> None:
     """List snapshots with their content hashes."""
     from greenclose.ingest.snapshots import list_snapshots, read_manifest

@@ -1,0 +1,49 @@
+{
+  "snapshot_id": "2026-09-15T122218",
+  "ran_at": "2026-09-15T19:07:52+05:30",
+  "n_passed": 6,
+  "n_checks": 6,
+  "checks": [
+    {
+      "name": "13.1 shuffled-label placebo",
+      "passed": true,
+      "detail": "mean IC -0.00206 (bar |IC| < 0.005), NW t -0.58 (bar |t| < 2.0), 1654 days",
+      "ic": -0.002061616846452431,
+      "t": -0.5783942441207741,
+      "n_days": 1654.0
+    },
+    {
+      "name": "13.2 truncation invariance",
+      "passed": true,
+      "detail": "bitwise identical at 10/10 random cut-offs",
+      "n_cutoffs": 10.0,
+      "n_failed": 0.0
+    },
+    {
+      "name": "13.3 positive control",
+      "passed": true,
+      "detail": "mean IC +1.000 with the label as a feature (bar > 0.5)",
+      "ic": 0.9997628741295383
+    },
+    {
+      "name": "13.4 synthetic-signal injection",
+      "passed": true,
+      "detail": "recovered IC +0.0965 for an injected rho of 0.10 (band [0.07, 0.13]); decile spread +56.5 bps/day",
+      "ic": 0.09649951085824851,
+      "decile_spread_bps": 56.46174071508534
+    },
+    {
+      "name": "13.5 cut-off enforcement",
+      "passed": true,
+      "detail": "get_bars without cutoff raises TypeError: True; store handed out no row past the cutoff in 6 reads (0 violations)",
+      "violations": 0.0
+    },
+    {
+      "name": "13.6 split integrity and in-fold fits",
+      "passed": true,
+      "detail": "81 retrains checked: purge respected, row counts exact, scaler statistics reproduce on training rows only",
+      "n_retrains": 81.0,
+      "n_problems": 0.0
+    }
+  ]
+}
