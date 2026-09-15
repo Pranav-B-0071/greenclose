@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import typer
 
 from greenclose import __version__
+from greenclose.config import Paths, load_config
 from greenclose.ops.logging import configure
 
 app = typer.Typer(
@@ -23,6 +26,88 @@ def _main(verbose: bool = typer.Option(False, "--verbose", "-v", help="Debug log
 def version() -> None:
     """Print the package version."""
     typer.echo(__version__)
+
+
+@app.command()
+def fetch(
+    from_csv: Path | None = typer.Option(None, "--from-csv", help="Directory of per-symbol CSVs (fallback)"),
+    start: str | None = typer.Option(None, help="First date (default: config data.start)"),
+    end: str | None = typer.Option(None, help="Exclusive end date (default: tomorrow)"),
+    notes: str = typer.Option("", help="Free text stored in the manifest"),
+) -> None:
+    """Acquire bars into a new immutable, content-hashed snapshot and diff it against the previous one."""
+    from greenclose.ingest.pipeline import coverage_table, take_snapshot
+    from greenclose.ingest.snapshots import read_bars, read_manifest
+
+    cfg, paths = load_config(), Paths()
+    target, drift = take_snapshot(cfg, paths, from_csv=from_csv, start=start, end=end, notes=notes)
+    m = read_manifest(target)
+    cov = coverage_table(read_bars(target))
+    ten_y = int((cov["years"] >= 9.5).sum())
+    typer.echo(f"snapshot      {m.snapshot_id}")
+    typer.echo(f"content_sha   {m.content_sha256}")
+    typer.echo(f"rows          {m.row_count}  index_rows {m.index_row_count}")
+    typer.echo(f"symbols       {len(m.symbols)} fetched, {len(m.failed_symbols)} failed {m.failed_symbols}")
+    typer.echo(f"range         {m.start} .. {m.end}")
+    typer.echo(f">=9.5y bars   {ten_y} of {len(cfg.universe.all_symbols)} symbols")
+    typer.echo(cov.to_string())
+    if drift is None:
+        typer.echo("drift         (first snapshot, nothing to compare)")
+    else:
+        typer.echo("\n".join(drift.lines()))
+
+
+@app.command()
+def validate(
+    snapshot: str | None = typer.Option(None, help="Snapshot id (default: latest)"),
+    apply_drops: bool = typer.Option(
+        False, "--apply-drops", help="Record failing symbols in config/universe.yaml"
+    ),
+) -> None:
+    """Data-quality report (reports/data_quality.html) with a mechanical verdict line."""
+    from greenclose.ingest.snapshots import read_bars, read_index, read_manifest, resolve_snapshot
+    from greenclose.ingest.validate import apply_drops as _apply
+    from greenclose.ingest.validate import render_html
+    from greenclose.ingest.validate import validate as _validate
+
+    cfg, paths = load_config(), Paths()
+    d = resolve_snapshot(paths.data_dir / "snapshots", snapshot)
+    m = read_manifest(d)
+    res = _validate(
+        read_bars(d),
+        read_index(d),
+        snapshot_id=m.snapshot_id,
+        vix_symbol=cfg.base.data.vix,
+        vix_min_coverage=cfg.base.data.vix_min_coverage,
+        expected_symbols=cfg.universe.all_symbols,
+    )
+    out = paths.reports_dir / "data_quality.html"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(render_html(res), encoding="utf-8")
+    typer.echo(res.calendar.to_string(index=False))
+    typer.echo(res.coverage.to_string(index=False))
+    typer.echo(f"suspicious prints: {len(res.suspicious)}   split/adjustment artefacts: {len(res.splits)}")
+    typer.echo(f"India VIX usable: {res.vix_usable}")
+    typer.echo(f"phantom days removed: {res.phantom_days}")
+    for s, r in res.flagged.items():
+        typer.echo(f"FLAG {s}: {'; '.join(r)}")
+    for s, r in res.drop.items():
+        typer.echo(f"DROP {s}: {r}")
+    typer.echo(f"report: {out}")
+    typer.echo(f"VERDICT: {res.verdict_line}")
+    if apply_drops:
+        _apply(paths.config_dir / "universe.yaml", res.drop)
+        typer.echo(f"universe.yaml updated: dropped={sorted(res.drop)}")
+
+
+@app.command()
+def snapshots() -> None:
+    """List snapshots with their content hashes."""
+    from greenclose.ingest.snapshots import list_snapshots, read_manifest
+
+    for d in list_snapshots(Paths().data_dir / "snapshots"):
+        m = read_manifest(d)
+        typer.echo(f"{m.snapshot_id}  {m.content_sha256[:16]}  rows={m.row_count}  {m.start}..{m.end}")
 
 
 if __name__ == "__main__":
