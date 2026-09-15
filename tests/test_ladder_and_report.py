@@ -272,3 +272,36 @@ def test_no_broker_code_anywhere_in_the_repository() -> None:
 
 def test_math_import_is_used() -> None:
     assert math.isfinite(1.0)
+
+
+def test_forward_backfill_fills_only_observable_outcomes(app_config: AppConfig) -> None:
+    """Outcomes appear only once the forward bar exists; earlier rows are filled, the latest is not."""
+    from greenclose.evaluation.forward import OUTCOME_COLUMNS, PREDICTION_COLUMNS, backfill_outcomes
+    from tests.fixtures.synthetic import synthetic_panel
+
+    data = synthetic_panel(n_symbols=6, n_days=60, seed=5, late_listers=0, missing_frac=0.0)
+    store = data.store()
+    dates = data.dates[-3:]  # two dates whose next bar exists, and the last date, whose does not
+    rows = []
+    rng = np.random.default_rng(0)
+    for d in dates:
+        for sym in sorted(data.bars["symbol"].unique()):
+            row = dict.fromkeys([*PREDICTION_COLUMNS, *OUTCOME_COLUMNS], np.nan)
+            row.update({"date": d, "symbol": sym, "score": float(rng.normal()), "selected": sym == "S00"})
+            rows.append(row)
+    frame = pd.DataFrame(rows)
+
+    filled, backfilled = backfill_outcomes(frame, app_config, store)
+    known = filled[filled["date"] < dates[-1]]
+    unknown = filled[filled["date"] == dates[-1]]
+    assert known["fwd_c2c"].notna().all(), "outcomes that exist must be filled"
+    assert unknown["fwd_c2c"].isna().all(), "the latest date has no forward bar yet"
+    assert len(backfilled) == 2
+    assert known.loc[known["selected"].astype(bool), "sim_net_pnl"].notna().all()
+    # net P&L must be below gross by exactly the modelled round trip
+    sel = known[known["selected"].astype(bool)]
+    gap = (sel["sim_gross_pnl"] - sel["sim_net_pnl"]).round(2).unique()
+    assert len(gap) == 1 and gap[0] > 0, "the round-trip cost must be constant and positive"
+    # excess versus the universe must be zero-mean within each date by construction
+    for _, g in known.groupby("date"):
+        assert abs(float(g["excess_vs_universe"].mean())) < 1e-12

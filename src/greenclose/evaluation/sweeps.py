@@ -257,9 +257,21 @@ def run_retrain_sweep(
     The horizon split is the Lou-Polk-Skouras test: momentum is documented to accrue overnight and
     reversal intraday, so close-to-close can blend a predictable component with an opposing one.
     """
-    from greenclose.evaluation.ladder import build_head, evaluate_predictions
+    import json
+
+    from greenclose.evaluation.ladder import build_head, evaluate_predictions, ladder_rungs, schedule_path
     from greenclose.labels.targets import build_labels
     from greenclose.models.train import walk_forward_predict
+
+    # Reuse the hyperparameter choice the ladder already made rather than re-running the 72-cell grid
+    # for every horizon and window. This is a compute decision, stated here and in the report: the
+    # sweep asks what the *label* and the *window* do, holding the model's own settings fixed.
+    schedule = None
+    rung = next((r for r in ladder_rungs() if r.head_kind == head_kind), None)
+    if rung is not None:
+        f = schedule_path(paths, rung, cfg, snapshot_id)
+        if f.exists():
+            schedule = json.loads(f.read_text(encoding="utf-8"))
 
     rows: list[dict[str, Any]] = []
     for horizon in horizons:
@@ -275,6 +287,7 @@ def run_retrain_sweep(
                     cfg=run_cfg,
                     oos_dates=dates,
                     seed=seed,
+                    hparam_schedule=schedule,
                 )
                 label = f"{horizon}/{window_name}" + (f"/h={h_days}d" if len(hold_days) > 1 else "")
                 ev = evaluate_predictions(

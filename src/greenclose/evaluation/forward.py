@@ -178,7 +178,17 @@ def run_forward(
     rows = rows[[*PREDICTION_COLUMNS, *OUTCOME_COLUMNS]]
 
     existing = read_log(paths)
-    existing = existing[~(pd.to_datetime(existing["date"]) == asof)] if len(existing) else existing
+    if len(existing):
+        same_day = pd.to_datetime(existing["date"]) == asof
+        # Re-running the same evening is fine. Rewriting a prediction whose outcome is already known
+        # is not: it would let the log be re-rolled until it looked good, which is the one thing a
+        # forward log exists to prevent.
+        if same_day.any() and existing.loc[same_day, "fwd_c2c"].notna().any():
+            raise ValueError(
+                f"{asof.date()} already has predictions with realised outcomes. The forward log is "
+                "append-only once an outcome is known; it cannot be re-rolled."
+            )
+        existing = existing[~same_day]
     combined = pd.concat([existing, rows], ignore_index=True)
     combined, backfilled = backfill_outcomes(combined, cfg, store)
     combined = combined.sort_values(["date", "symbol"]).reset_index(drop=True)
