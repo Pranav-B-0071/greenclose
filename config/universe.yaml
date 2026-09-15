@@ -14,4 +14,6 @@ universe:
   materials:    [ULTRACEMCO, GRASIM, AMBUJACEM]
   infra_power:  [LT, NTPC, POWERGRID, ADANIPORTS]
   consumer:     [TITAN, ASIANPAINT, BHARTIARTL]
-dropped: {}
+dropped:
+  TATAMOTORS: "no bars in snapshot: the source returned nothing for this ticker"
+  VEDL: "1 single-day |return|>50% present in both raw and adjusted series (corporate action not adjusted by the source, e.g. a demerger)"
