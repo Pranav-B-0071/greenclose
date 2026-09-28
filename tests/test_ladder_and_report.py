@@ -16,8 +16,10 @@ import pandas as pd
 import pytest
 
 from greenclose.config import AppConfig, Paths
+from greenclose.evaluation.baselines import RunEvaluation
 from greenclose.evaluation.holdout import HoldoutAlreadyTouched, already_touched, record_touch, touch_path
 from greenclose.evaluation.ladder import Rung, build_head, h2_rungs, ladder_rungs, rank_average
+from greenclose.evaluation.ladder_run import _pooled_cost_share
 from greenclose.evaluation.report import Criterion, ReportInputs, overall_verdict
 from greenclose.evaluation.significance import deflated_sharpe, expected_max_sharpe
 from greenclose.evaluation.sweeps import COST_MULTIPLIERS, HOLD_PERIODS, K_VALUES, decision_cells
@@ -416,3 +418,45 @@ def test_forward_log_survives_a_parquet_round_trip_with_no_outcomes_yet(
     assert backfilled == [], "no date is observable yet"
     assert filled["fwd_c2c"].isna().all()
 
+
+# --------------------------------------------------------------- pooling a ratio across seeds
+
+
+def _eval_with(gross: float, costs: float) -> RunEvaluation:
+    return RunEvaluation(
+        name="stub",
+        family_b={"gross_pnl": gross, "costs_total": costs},
+        family_a={},
+        per_date=pd.DataFrame(),
+        daily_ret=pd.Series(dtype="float64"),
+    )
+
+
+def test_cost_share_is_pooled_in_rupees_not_averaged_as_a_ratio() -> None:
+    """One seed near zero gross must not make the whole rung read as infinitely expensive.
+
+    These are the real rank-ensemble seeds: one lost 1,277 rupees gross, the other four made 14,000 to
+    35,000. The mean of the per-seed ratios is infinite and says costs ate everything. Pooling says 26%,
+    which is what the experiment actually did, and the count of loss-making seeds keeps that visible.
+    """
+    evals = [
+        _eval_with(-1276.64, 6606.44),
+        _eval_with(22536.81, 3942.12),
+        _eval_with(14673.57, 6707.28),
+        _eval_with(35085.59, 4452.21),
+        _eval_with(30461.31, 4804.87),
+    ]
+    mean_of_ratios = np.mean([math.inf, 3942.12 / 22536.81, 6707.28 / 14673.57, 4452.21 / 35085.59,
+                              4804.87 / 30461.31])
+    assert mean_of_ratios == math.inf, "this is the arithmetic being replaced"
+
+    share, n_neg = _pooled_cost_share(evals)
+    assert share == pytest.approx(0.2613, abs=5e-4)
+    assert n_neg == 1, "the loss-making seed is counted, not averaged away"
+
+
+def test_cost_share_is_infinite_only_when_the_pooled_gross_is_not_positive() -> None:
+    share, n_neg = _pooled_cost_share([_eval_with(-100.0, 50.0), _eval_with(-200.0, 50.0)])
+    assert share == math.inf and n_neg == 2
+    share, n_neg = _pooled_cost_share([_eval_with(0.0, 0.0)])
+    assert math.isnan(share), "no trades at all is not measured, not infinitely expensive"

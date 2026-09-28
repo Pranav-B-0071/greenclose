@@ -161,18 +161,23 @@ def build_criteria(inp: ReportInputs, headline: dict[str, Any]) -> list[Criterio
             f"{diff * 100:+.1f} pp p.a."
             + (f"   (model {net * 100:+.1f}%, B2 {b2_net * 100:+.1f}%)" if net == net else ""),
             bool(diff == diff and diff > 0),
-            "the toughest and most important baseline",
+            "the toughest and most important baseline. &quot;p.a.&quot; here is total P&amp;L over "
+            "initial capital divided by years, not a compound growth rate, so it is not comparable to "
+            "a published CAGR" + _b2_cagr_note(b2),
         )
     )
-    cog = headline.get("costs_over_gross", math.nan)
+    cog, n_neg, n_seeds = _cost_share(inp, headline)
+    seed_note = f"; {n_neg} of {n_seeds} seeds made no gross profit at all" if n_neg else ""
     crit.append(
         Criterion(
             "Costs as a share of gross P&amp;L",
-            ("infinite (gross P&amp;L is negative)" if cog == math.inf else f"{cog * 100:.0f}%")
+            ("infinite (gross P&amp;L is not positive)" if cog == math.inf else f"{cog * 100:.0f}%")
+            + (f"   ({n_neg}/{n_seeds} seeds gross-negative)" if n_neg else "")
             if cog == cog
             else "n/a",
             bool(cog == cog and cog != math.inf and cog < cfg.base.report.costs_gross_max),
-            f"above {cfg.base.report.costs_gross_max:.0%} the design is wrong regardless of the net result",
+            f"above {cfg.base.report.costs_gross_max:.0%} the design is wrong regardless of the net "
+            f"result. Pooled over seeds in rupees, not averaged as a ratio{seed_note}",
         )
     )
     dsr = compute_dsr(inp, headline)
@@ -184,7 +189,7 @@ def build_criteria(inp: ReportInputs, headline: dict[str, Any]) -> list[Criterio
             if dsr["dsr"] == dsr["dsr"]
             else f"n/a (N = {int(dsr['n_trials'])} configurations tried)",
             bool(dsr["dsr"] == dsr["dsr"] and dsr["dsr"] > cfg.base.report.dsr_bar),
-            f"bar is DSR &gt; {cfg.base.report.dsr_bar}",
+            f"bar is DSR &gt; {cfg.base.report.dsr_bar}{_seed_spread_note(inp, headline)}",
         )
     )
     if len(inp.b0):
@@ -211,6 +216,75 @@ def build_criteria(inp: ReportInputs, headline: dict[str, Any]) -> list[Criterio
     return crit
 
 
+def _b2_cagr_note(b2: dict[str, Any]) -> str:
+    cagr = b2.get("cagr", math.nan)
+    return f" (B2 compounds at {cagr * 100:.1f}% a year)" if cagr == cagr else ""
+
+
+def _cost_share(inp: ReportInputs, headline: dict[str, Any]) -> tuple[float, int, int]:
+    """Costs as a share of gross P&L, pooled in rupees over the seeds.
+
+    Prefers the value the ladder already pooled. Falls back to the per-seed run summaries so a
+    ladder.json written before pooling existed still reports the honest ratio rather than infinity.
+    """
+    if "n_seeds_gross_nonpositive" in headline:
+        return (
+            float(headline.get("costs_over_gross", math.nan)),
+            int(headline["n_seeds_gross_nonpositive"] or 0),
+            int(headline.get("n_seeds", 0) or 0),
+        )
+    prefix = str(headline.get("name", "")).replace(" ", "_")
+    runs = [s.get("family_b", {}) for k, s in inp.run_summaries.items() if k.startswith(prefix)]
+    if not runs:
+        return math.nan, 0, int(headline.get("n_seeds", 0) or 0)
+    gross = sum(float(r.get("gross_pnl", 0.0) or 0.0) for r in runs)
+    costs = sum(float(r.get("costs_total", 0.0) or 0.0) for r in runs)
+    n_neg = sum(1 for r in runs if float(r.get("gross_pnl", 0.0) or 0.0) <= 0.0)
+    share = costs / gross if gross > 0.0 else (math.inf if costs > 0.0 else math.nan)
+    return share, n_neg, len(runs)
+
+
+def _seed_spread_note(inp: ReportInputs, headline: dict[str, Any]) -> str:
+    """Say so when the spread across seeds is as large as the effect. That is itself the finding."""
+    sr, sd = headline.get("sharpe_per_period", math.nan), headline.get("sharpe_sd", math.nan)
+    if sr != sr or sd != sd:
+        sr, sd = _seed_sharpe_spread(inp, str(headline.get("name", "")))
+    if sr != sr or sd != sd or sd <= 0:
+        return ""
+    note = f". Sharpe across seeds {sr:.4f} +/- {sd:.4f}"
+    return note + (" -- the spread is as large as the effect" if sd >= abs(sr) * 0.9 else "")
+
+
+def _seed_sharpe_spread(inp: ReportInputs, name: str) -> tuple[float, float]:
+    """Per-period Sharpe of one rung across seeds: mean and sample standard deviation."""
+    prefix = name.replace(" ", "_")
+    vals = [
+        float(s["family_b"]["sharpe_per_period"])
+        for k, s in inp.run_summaries.items()
+        if k.startswith(prefix) and (s.get("family_b", {}).get("sharpe_per_period") is not None)
+    ]
+    vals = [v for v in vals if v == v]
+    if len(vals) < 2:
+        return math.nan, math.nan
+    mean = sum(vals) / len(vals)
+    var = sum((v - mean) ** 2 for v in vals) / (len(vals) - 1)
+    return mean, math.sqrt(var)
+
+
+def _seed_mean_family_b(inp: ReportInputs, name: str) -> dict[str, float]:
+    """Family B for one rung, averaged over every seed whose run summary is on disk."""
+    prefix = name.replace(" ", "_")
+    runs = [s.get("family_b", {}) for k, s in inp.run_summaries.items() if k.startswith(prefix)]
+    if not runs:
+        return {}
+    out: dict[str, float] = {}
+    for key in ("sharpe_per_period", "skew", "kurtosis", "n_days"):
+        vals = [float(r[key]) for r in runs if r.get(key) is not None and r[key] == r[key]]
+        if vals:
+            out[key] = sum(vals) / len(vals)
+    return out
+
+
 def compute_dsr(inp: ReportInputs, headline: dict[str, Any]) -> dict[str, float]:
     """Deflated Sharpe with the honest trial count read from research_log (brief invariant 9)."""
     tried = distinct(inp.research_log)  # one row per configuration, not per time it was run
@@ -221,17 +295,19 @@ def compute_dsr(inp: ReportInputs, headline: dict[str, Any]) -> dict[str, float]
         and r.get("counts_for_dsr", True)
         and r["oos_sharpe"] == r["oos_sharpe"]
     ]
-    name = headline.get("name", "")
-    summary = None
-    for key, s in inp.run_summaries.items():
-        if key.startswith(str(name).replace(" ", "_").replace("R", "R")):
-            summary = s
-            break
-    fb = (summary or {}).get("family_b", {})
-    sr_hat = fb.get("sharpe_per_period", math.nan)
-    n_obs = int(fb.get("n_days", 0) or 0)
-    skew = fb.get("skew", 0.0) or 0.0
-    kurt = fb.get("kurtosis", 3.0) or 3.0
+    # The headline row is the mean over seeds, which is what the brief asks a headline to be. Reading
+    # one seed's summary instead -- the old behaviour -- picked whichever run sorted first, and for the
+    # rank ensemble that was the single seed out of five that lost money gross.
+    sr_hat = headline.get("sharpe_per_period", math.nan)
+    n_obs = int(headline.get("n_days", 0) or 0)
+    skew = headline.get("skew", 0.0) or 0.0
+    kurt = headline.get("kurtosis", 3.0) or 3.0
+    if sr_hat != sr_hat or n_obs < 2:  # an older ladder.json without the aggregated Family B columns
+        fb = _seed_mean_family_b(inp, str(headline.get("name", "")))
+        sr_hat = fb.get("sharpe_per_period", math.nan)
+        n_obs = int(fb.get("n_days", 0) or 0)
+        skew = fb.get("skew", 0.0) or 0.0
+        kurt = fb.get("kurtosis", 3.0) or 3.0
     n_trials = sum(1 for r in tried if r.get("counts_for_dsr", True))
     if sr_hat != sr_hat or n_obs < 2:
         return {"dsr": math.nan, "sr0": 0.0, "n_trials": float(n_trials), "n_sharpes": float(len(sharpes))}

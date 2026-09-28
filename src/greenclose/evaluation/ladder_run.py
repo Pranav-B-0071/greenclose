@@ -5,6 +5,7 @@ Kept out of cli.py so the CLI stays a thin argument parser and this stays testab
 
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -39,8 +40,8 @@ FAMILY_B_KEYS = {
     "sharpe": "sharpe",
     "net_bps_inv": "net_bps_per_day_invested",
     "gross_bps_inv": "gross_bps_per_day_invested",
-    "costs_over_gross": "costs_over_gross_pnl",
 }
+# costs_over_gross is deliberately absent above: see _pooled_cost_share.
 
 
 @dataclass
@@ -51,6 +52,24 @@ class LadderOutput:
     h2_comparisons: dict[str, dict[str, float | str]]
     lines: list[str]
     elapsed_s: float
+
+
+def _pooled_cost_share(evals: list[RunEvaluation]) -> tuple[float, int]:
+    """Costs as a share of gross P&L across the seeds, pooled in rupees, and how many seeds lost money.
+
+    Averaging this ratio over seeds is the wrong arithmetic. The denominator can sit near zero or go
+    negative -- one rank-ensemble seed made -1,277 rupees gross while the other four made 14,000 to
+    35,000 -- and one infinite term then makes the mean infinite, reporting the whole rung as though
+    costs had eaten every rupee. Pooling the rupees answers the question actually asked: over all the
+    seeds, what share of gross P&L went to charges. The count of loss-making seeds is returned with it
+    so the dispersion is stated rather than averaged away.
+    """
+    gross = sum(float(e.family_b.get("gross_pnl", 0.0) or 0.0) for e in evals)
+    costs = sum(float(e.family_b.get("costs_total", 0.0) or 0.0) for e in evals)
+    n_neg = sum(1 for e in evals if float(e.family_b.get("gross_pnl", 0.0) or 0.0) <= 0.0)
+    if gross > 0.0:
+        return costs / gross, n_neg
+    return (math.inf if costs > 0.0 else math.nan), n_neg
 
 
 def _summarise_rung(name: str, evals: list[RunEvaluation]) -> dict[str, Any]:
@@ -67,6 +86,13 @@ def _summarise_rung(name: str, evals: list[RunEvaluation]) -> dict[str, Any]:
     row["decile_spread_bps"] = seed_summary(evals, "decile_spread_mean")["mean"] * 1e4
     for short, key in FAMILY_B_KEYS.items():
         row[short] = seed_summary(evals, key, "family_b")["mean"]
+    row["sharpe_sd"] = seed_summary(evals, "sharpe_per_period", "family_b")["std"]
+    row["sharpe_per_period"] = seed_summary(evals, "sharpe_per_period", "family_b")["mean"]
+    row["costs_over_gross"], n_neg = _pooled_cost_share(evals)
+    row["n_seeds_gross_nonpositive"] = float(n_neg)
+    row["skew"] = seed_summary(evals, "skew", "family_b")["mean"]
+    row["kurtosis"] = seed_summary(evals, "kurtosis", "family_b")["mean"]
+    row["n_days"] = seed_summary(evals, "n_days", "family_b")["mean"]
     row["n_seeds"] = float(len(evals))
     return row
 
