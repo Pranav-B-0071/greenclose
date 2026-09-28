@@ -3,10 +3,15 @@
     Run every remaining GREENCLOSE phase end to end and regenerate the report.
 
 .DESCRIPTION
-    One command. Roughly 1.5 hours on a 16-core laptop with memory free; longer if the pool
-    has to be small, because memory rather than cores is usually what limits it. Safe to interrupt: the model ladder
-    caches its predictions, so re-running skips whatever already finished. Baselines and sweeps
-    restart from scratch if interrupted.
+    One command. Measured on 2026-09-16 on a 16-core, 15 GB laptop: 14 min ladder with the model
+    fits already cached, 5 min decision sweeps, 3.5 h retrain sweeps, ~30 min baselines. Budget
+    four to five hours, or pass -SkipSweeps once the sweeps are done, which is most of it. Memory
+    rather than cores is usually what limits the pool. Safe to interrupt: the model ladder caches its
+    predictions, so re-running skips whatever already finished. Baselines and sweeps restart from
+    scratch if interrupted.
+
+    The retrain sweeps are slow because they are the only step that refits models -- six cells, each a
+    full monthly-retrain walk-forward, and nothing in them can be cached from the ladder.
 
     Order is deliberate. The ladder comes first because it is the main experiment, and the 1,000
     random simulations come last because they are the longest single step.
@@ -45,11 +50,20 @@ if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir | Out
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $log = Join-Path $logDir "run_full_$stamp.log"
 
+# Tee-Object has no -Encoding in Windows PowerShell and writes UTF-16, while Add-Content wrote the
+# banners as ANSI: the first run's log came out half readable and half interleaved with NULs. One
+# BOM-less UTF-8 writer for every line keeps the log one encoding, and appending directly is faster
+# than a cmdlet per line.
+$script:Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+function Write-Log([string]$Line) {
+    [System.IO.File]::AppendAllText($log, $Line + [Environment]::NewLine, $script:Utf8NoBom)
+}
+
 function Step([string]$Name, [scriptblock]$Body) {
     $t0 = Get-Date
     Write-Host ""
     Write-Host "=== $Name  (started $($t0.ToString('HH:mm:ss')))" -ForegroundColor Cyan
-    "=== $Name  started $($t0.ToString('o'))" | Add-Content $log
+    Write-Log "=== $Name  started $($t0.ToString('o'))"
 
     # Windows PowerShell wraps every line a native program writes to stderr in an ErrorRecord, so
     # under ErrorActionPreference=Stop one library warning on stderr would abort an hour-long run
@@ -60,7 +74,11 @@ function Step([string]$Name, [scriptblock]$Body) {
     $prev = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-        & $Body 2>&1 | ForEach-Object { "$_" } | Tee-Object -FilePath $log -Append
+        & $Body 2>&1 | ForEach-Object {
+            $line = "$_"
+            Write-Host $line
+            Write-Log $line
+        }
     } finally {
         $ErrorActionPreference = $prev
     }
@@ -70,7 +88,7 @@ function Step([string]$Name, [scriptblock]$Body) {
     }
     $mins = [Math]::Round(((Get-Date) - $t0).TotalMinutes, 1)
     Write-Host "=== $Name done in $mins min" -ForegroundColor Green
-    "=== $Name done in $mins min" | Add-Content $log
+    Write-Log "=== $Name done in $mins min"
 }
 
 # Each worker holds its own feature panel and day slices: about 0.5 GB resident. Memory, not cores,
@@ -93,22 +111,22 @@ Write-Host "GREENCLOSE full run. jobs=$Jobs  B0 sims=$B0Sims" -ForegroundColor Y
 Write-Host "log: $log"
 
 if (-not $SkipLadder) {
-    Step "P7 model ladder, rungs 3-8, 5 seeds, plus the H2 experiment (~35 min, ~15 if cached)" {
+    Step "P7 model ladder, rungs 3-8, 5 seeds, plus the H2 experiment (14 min cached, 1.7 h cold)" {
         uv run greenclose ladder --rungs 3-8 --jobs $Jobs
     }
 }
 
 if (-not $SkipSweeps) {
-    Step "P8 decision-layer sweeps: hold, K, cost multiplier, product, rebalance (~6 min)" {
+    Step "P8 decision-layer sweeps: hold, K, cost multiplier, product, rebalance (~5 min)" {
         uv run greenclose sweep --group decision
     }
-    Step "P8 retrain sweeps: C2C/C2O/O2C horizons, expanding vs 2-year rolling (~12 min)" {
+    Step "P8 retrain sweeps: C2C/C2O/O2C horizons, expanding vs 2-year rolling (~3.5 h: it refits)" {
         uv run greenclose sweep --group retrain
     }
 }
 
 if (-not $SkipBaselines) {
-    Step "P5 baselines with the full B0 null distribution, $B0Sims simulations (~25 min)" {
+    Step "P5 baselines with the full B0 null distribution, $B0Sims simulations (~30 min)" {
         uv run greenclose baselines --b0-sims $B0Sims --jobs $Jobs
     }
 }
