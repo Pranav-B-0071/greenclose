@@ -374,3 +374,45 @@ def test_day_rank_ic_is_nan_without_warning_when_a_candidate_predicts_one_number
     ranked = pd.DataFrame({"p": [1.0, 2.0, 3.0, 4.0], "y": [0.1, 0.2, 0.3, 0.4]})
     assert _day_rank_ic(ranked) == pytest.approx(1.0)
     assert _nanmean([1.0, math.nan, 3.0]) == pytest.approx(2.0)
+
+
+def test_forward_log_survives_a_parquet_round_trip_with_no_outcomes_yet(
+    app_config: AppConfig, tmp_path: Path
+) -> None:
+    """The second evening must work as well as the first.
+
+    A first evening writes outcome columns that are entirely null. Parquet stores them as nulls and
+    returns them as object, so the second evening multiplied an object column by a position size and
+    tried to assign the result into a float column. `read_log` coerces them back to float, and
+    `_simulate_pnl` no longer assigns into an empty selection.
+    """
+    from greenclose.evaluation.forward import (
+        OUTCOME_COLUMNS,
+        PREDICTION_COLUMNS,
+        backfill_outcomes,
+        log_path,
+        read_log,
+    )
+    from tests.fixtures.synthetic import synthetic_panel
+
+    data = synthetic_panel(n_symbols=6, n_days=60, seed=5, late_listers=0, missing_frac=0.0)
+    store = data.store()
+    last = data.dates[-1]  # the only logged date, so nothing is observable yet
+    rows = [
+        dict.fromkeys([*PREDICTION_COLUMNS, *OUTCOME_COLUMNS], np.nan)
+        | {"date": last, "symbol": sym, "score": 0.1, "selected": False}
+        for sym in sorted(data.bars["symbol"].unique())
+    ]
+    paths = Paths(root=tmp_path)
+    out = log_path(paths)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(rows)[[*PREDICTION_COLUMNS, *OUTCOME_COLUMNS]].to_parquet(out, index=False)
+
+    reread = read_log(paths)
+    for col in OUTCOME_COLUMNS:
+        assert reread[col].dtype == "float64", f"{col} came back from parquet as {reread[col].dtype}"
+
+    filled, backfilled = backfill_outcomes(reread, app_config, store)  # this used to raise TypeError
+    assert backfilled == [], "no date is observable yet"
+    assert filled["fwd_c2c"].isna().all()
+

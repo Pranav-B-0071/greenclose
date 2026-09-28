@@ -90,7 +90,18 @@ def log_path(paths: Paths) -> Path:
 
 def read_log(paths: Paths) -> pd.DataFrame:
     p = log_path(paths)
-    return pd.read_parquet(p) if p.exists() else pd.DataFrame(columns=[*PREDICTION_COLUMNS, *OUTCOME_COLUMNS])
+    if not p.exists():
+        return pd.DataFrame(columns=[*PREDICTION_COLUMNS, *OUTCOME_COLUMNS])
+    frame = pd.read_parquet(p)
+    # An outcome column that is still entirely unrealised is written as all-null and comes back from
+    # parquet as object, not float. Arithmetic on it then produces object, and assigning that into a
+    # float column raises -- which is how the runner broke on its second evening, the first evening
+    # having had freshly created float columns. Coerce on the way in so the dtypes are what the rest
+    # of this module assumes.
+    for col in OUTCOME_COLUMNS:
+        if col in frame.columns:
+            frame[col] = pd.to_numeric(frame[col], errors="coerce").astype("float64")
+    return frame
 
 
 def _score_with_pinned(
@@ -255,10 +266,13 @@ def _simulate_pnl(frame: pd.DataFrame, cfg: AppConfig, pending: pd.Series) -> pd
     size = cfg.base.simulation.position_size
     rt = cm.round_trip(size, slippage_bps_per_leg=PLANNING_SLIPPAGE_BPS).total
     sel = pending & frame["selected"].astype(bool) & frame["fwd_c2c"].notna()
-    frame.loc[sel, "sim_gross_pnl"] = frame.loc[sel, "fwd_c2c"] * size
-    frame.loc[sel, "sim_net_pnl"] = frame.loc[sel, "fwd_c2c"] * size - rt
+    if sel.any():
+        realised = pd.to_numeric(frame.loc[sel, "fwd_c2c"], errors="coerce").astype("float64")
+        frame.loc[sel, "sim_gross_pnl"] = realised * size
+        frame.loc[sel, "sim_net_pnl"] = realised * size - rt
     not_sel = pending & ~frame["selected"].astype(bool)
-    frame.loc[not_sel, ["sim_gross_pnl", "sim_net_pnl"]] = 0.0
+    if not_sel.any():
+        frame.loc[not_sel, ["sim_gross_pnl", "sim_net_pnl"]] = 0.0
     return frame
 
 
